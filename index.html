@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NWS Weather + Alerts</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #1a2433;
+      --muted: #5a6677;
+      --border: #d7dce5;
+      --idle: #6b7280;
+      --fetching: #0ea5e9;
+      --processing: #f59e0b;
+      --error: #dc2626;
+      --ok: #16a34a;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --card: #111827;
+        --text: #e5e7eb;
+        --muted: #9ca3af;
+        --border: #374151;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.4;
+    }
+
+    .container {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 1rem;
+    }
+
+    .status-banner {
+      border: 1px solid var(--border);
+      border-left-width: 8px;
+      background: var(--card);
+      border-radius: 8px;
+      padding: 0.8rem 1rem;
+      margin-bottom: 1rem;
+      font-weight: 600;
+    }
+    .status-idle { border-left-color: var(--idle); }
+    .status-fetching { border-left-color: var(--fetching); }
+    .status-processing { border-left-color: var(--processing); }
+    .status-error { border-left-color: var(--error); }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    h1, h2 { margin: 0 0 0.75rem; }
+    h1 { font-size: 1.6rem; }
+    h2 { font-size: 1.1rem; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.8rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.9rem;
+      margin-bottom: 0.25rem;
+      color: var(--muted);
+    }
+
+    input, select, button {
+      width: 100%;
+      padding: 0.55rem 0.6rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+      background: #2563eb;
+      border-color: #2563eb;
+      color: white;
+      font-weight: 600;
+    }
+
+    button.secondary {
+      background: transparent;
+      color: var(--text);
+      border-color: var(--border);
+    }
+
+    .hidden { display: none; }
+    .row { display: flex; gap: 0.6rem; align-items: end; }
+    .row > * { flex: 1; }
+
+    .weather-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 0.7rem;
+    }
+
+    .metric {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.65rem;
+    }
+
+    .metric .label { font-size: 0.82rem; color: var(--muted); }
+    .metric .value { font-size: 1.1rem; font-weight: 700; }
+
+    .alerts {
+      display: grid;
+      gap: 0.8rem;
+    }
+
+    .alert-item {
+      border: 1px solid var(--border);
+      border-left: 6px solid var(--ok);
+      border-radius: 8px;
+      padding: 0.8rem;
+    }
+
+    .muted { color: var(--muted); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .small { font-size: 0.86rem; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>National Weather Service Dashboard</h1>
+
+    <div id="statusBanner" class="status-banner status-idle">Status: idle</div>
+
+    <section class="card">
+      <h2>Location + Query Options</h2>
+      <div class="grid">
+        <div>
+          <label for="locationMode">Location mode (NWS params)</label>
+          <select id="locationMode">
+            <option value="latlon">Lat/Lon (for points + alerts by point)</option>
+            <option value="point">Point string (lat,lon)</option>
+            <option value="zone">NWS zone id (e.g., CAZ041)</option>
+            <option value="area">State/Territory area code (e.g., CA)</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="rangeMiles">Alert range (miles)</label>
+          <input id="rangeMiles" type="number" min="0" step="1" value="50" />
+        </div>
+      </div>
+
+      <div id="latlonInputs" class="row" style="margin-top:0.8rem;">
+        <div>
+          <label for="latInput">Latitude</label>
+          <input id="latInput" type="number" step="0.0001" placeholder="39.7456" />
+        </div>
+        <div>
+          <label for="lonInput">Longitude</label>
+          <input id="lonInput" type="number" step="0.0001" placeholder="-97.0892" />
+        </div>
+        <div>
+          <button type="button" id="gpsBtn" class="secondary">Use current GPS</button>
+        </div>
+      </div>
+
+      <div id="pointInputs" class="hidden" style="margin-top:0.8rem;">
+        <label for="pointInput">Point (lat,lon)</label>
+        <input id="pointInput" type="text" placeholder="39.7456,-97.0892" />
+      </div>
+
+      <div id="zoneInputs" class="hidden" style="margin-top:0.8rem;">
+        <label for="zoneInput">Zone ID</label>
+        <input id="zoneInput" type="text" placeholder="CAZ041" />
+      </div>
+
+      <div id="areaInputs" class="hidden" style="margin-top:0.8rem;">
+        <label for="areaInput">Area code</label>
+        <input id="areaInput" type="text" placeholder="CA" maxlength="2" />
+      </div>
+
+      <div style="margin-top:0.9rem;">
+        <button type="button" id="loadBtn">Load weather + alerts</button>
+      </div>
+      <p class="small muted" style="margin-top:0.7rem;">
+        Note: Weather details come from NWS point/observation endpoints. Range filtering for alerts uses alert geometry distance when available.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Current Weather</h2>
+      <div id="weatherSummary" class="muted">No weather data loaded yet.</div>
+      <div id="weatherGrid" class="weather-grid" style="margin-top:0.8rem;"></div>
+    </section>
+
+    <section class="card">
+      <h2>Current Alerts Within Range</h2>
+      <div id="alertsSummary" class="muted">No alerts loaded yet.</div>
+      <div id="alertsList" class="alerts" style="margin-top:0.8rem;"></div>
+    </section>
+  </main>
+
+  <script>
+    const statusBanner = document.getElementById('statusBanner');
+    const locationMode = document.getElementById('locationMode');
+    const loadBtn = document.getElementById('loadBtn');
+    const gpsBtn = document.getElementById('gpsBtn');
+
+    const latlonInputs = document.getElementById('latlonInputs');
+    const pointInputs = document.getElementById('pointInputs');
+    const zoneInputs = document.getElementById('zoneInputs');
+    const areaInputs = document.getElementById('areaInputs');
+
+    const latInput = document.getElementById('latInput');
+    const lonInput = document.getElementById('lonInput');
+    const pointInput = document.getElementById('pointInput');
+    const zoneInput = document.getElementById('zoneInput');
+    const areaInput = document.getElementById('areaInput');
+    const rangeMilesInput = document.getElementById('rangeMiles');
+
+    const weatherSummary = document.getElementById('weatherSummary');
+    const weatherGrid = document.getElementById('weatherGrid');
+    const alertsSummary = document.getElementById('alertsSummary');
+    const alertsList = document.getElementById('alertsList');
+
+    function setStatus(state, message) {
+      statusBanner.className = `status-banner status-${state}`;
+      statusBanner.textContent = `Status: ${state}${message ? ` — ${message}` : ''}`;
+    }
+
+    function cToF(c) {
+      if (typeof c !== 'number') return null;
+      return (c * 9 / 5) + 32;
+    }
+
+    function metersToMiles(m) {
+      return typeof m === 'number' ? m * 0.000621371 : null;
+    }
+
+    function degToCompass(deg) {
+      if (typeof deg !== 'number') return 'N/A';
+      const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+      return dirs[Math.round(deg / 22.5) % 16];
+    }
+
+    async function nwsFetch(url) {
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/geo+json'
+        }
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 200)}`);
+      }
+      return response.json();
+    }
+
+    function getCenterFromGeometry(geometry) {
+      if (!geometry || !geometry.coordinates) return null;
+      let points = [];
+      const type = geometry.type;
+      if (type === 'Point') {
+        points = [geometry.coordinates];
+      } else if (type === 'Polygon') {
+        points = geometry.coordinates.flat();
+      } else if (type === 'MultiPolygon') {
+        points = geometry.coordinates.flat(2);
+      }
+      if (!points.length) return null;
+      let lonSum = 0;
+      let latSum = 0;
+      let count = 0;
+      for (const p of points) {
+        if (Array.isArray(p) && p.length >= 2) {
+          lonSum += p[0];
+          latSum += p[1];
+          count += 1;
+        }
+      }
+      if (!count) return null;
+      return { lat: latSum / count, lon: lonSum / count };
+    }
+
+    function haversineMiles(lat1, lon1, lat2, lon2) {
+      const toRad = n => (n * Math.PI) / 180;
+      const R = 3958.8;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat / 2) ** 2
+        + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+      return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function renderWeather(weather) {
+      if (!weather) {
+        weatherSummary.textContent = 'No weather data available.';
+        weatherGrid.innerHTML = '';
+        return;
+      }
+
+      weatherSummary.textContent = `${weather.stationName ?? 'Unknown station'} · Updated: ${weather.timestamp ? new Date(weather.timestamp).toLocaleString() : 'N/A'}`;
+
+      const metrics = [
+        ['Temperature', weather.temperatureF != null ? `${weather.temperatureF.toFixed(1)} °F` : 'N/A'],
+        ['Wind', weather.windDir && weather.windMph != null ? `${weather.windDir} ${weather.windMph.toFixed(1)} mph` : 'N/A'],
+        ['Humidity', weather.humidity != null ? `${weather.humidity}%` : 'N/A'],
+        ['Dewpoint', weather.dewpointF != null ? `${weather.dewpointF.toFixed(1)} °F` : 'N/A'],
+        ['Barometric pressure', weather.pressureInHg != null ? `${weather.pressureInHg.toFixed(2)} inHg` : 'N/A'],
+        ['Visibility', weather.visibilityMiles != null ? `${weather.visibilityMiles.toFixed(1)} mi` : 'N/A'],
+        ['Text description', weather.textDescription ?? 'N/A']
+      ];
+
+      weatherGrid.innerHTML = metrics.map(([label, value]) => `
+        <div class="metric">
+          <div class="label">${label}</div>
+          <div class="value">${value}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderAlerts(alerts, rangeMiles) {
+      alertsSummary.textContent = `${alerts.length} alert(s) found within ~${rangeMiles} miles.`;
+      if (!alerts.length) {
+        alertsList.innerHTML = '<div class="muted">No active alerts in selected range.</div>';
+        return;
+      }
+
+      alertsList.innerHTML = alerts.map((a) => {
+        const p = a.properties || {};
+        const areas = (p.areaDesc || 'N/A').split(';').map(s => s.trim()).filter(Boolean).slice(0, 8);
+        return `
+          <article class="alert-item">
+            <div><strong>${p.event ?? 'Unknown alert type'}</strong></div>
+            <div class="small"><strong>Expires:</strong> ${p.expires ? new Date(p.expires).toLocaleString() : 'N/A'}</div>
+            <div class="small"><strong>Affected areas:</strong> ${areas.join(', ') || 'N/A'}</div>
+            <p class="small">${p.description ? p.description.slice(0, 800) : 'No description provided.'}</p>
+          </article>
+        `;
+      }).join('');
+    }
+
+    function updateModeInputs() {
+      const mode = locationMode.value;
+      latlonInputs.classList.toggle('hidden', mode !== 'latlon');
+      pointInputs.classList.toggle('hidden', mode !== 'point');
+      zoneInputs.classList.toggle('hidden', mode !== 'zone');
+      areaInputs.classList.toggle('hidden', mode !== 'area');
+    }
+
+    function normalizePointFromMode() {
+      const mode = locationMode.value;
+      if (mode === 'latlon') {
+        const lat = Number(latInput.value);
+        const lon = Number(lonInput.value);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error('Provide valid latitude and longitude.');
+        return { lat, lon };
+      }
+      if (mode === 'point') {
+        const [latRaw, lonRaw] = pointInput.value.split(',').map(s => s.trim());
+        const lat = Number(latRaw);
+        const lon = Number(lonRaw);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error('Point must be in lat,lon format.');
+        return { lat, lon };
+      }
+      return null;
+    }
+
+    async function fetchWeatherAndAlerts() {
+      setStatus('fetching', 'Requesting data from NWS API...');
+      weatherGrid.innerHTML = '';
+      alertsList.innerHTML = '';
+
+      const rangeMiles = Math.max(0, Number(rangeMilesInput.value) || 0);
+      const mode = locationMode.value;
+
+      let weather = null;
+      let alerts = [];
+
+      if (mode === 'latlon' || mode === 'point') {
+        const { lat, lon } = normalizePointFromMode();
+
+        setStatus('processing', 'Resolving NWS grid point + station...');
+        const pointData = await nwsFetch(`https://api.weather.gov/points/${lat},${lon}`);
+        const stationsUrl = pointData.properties?.observationStations;
+        const stateCode = pointData.properties?.relativeLocation?.properties?.state;
+
+        if (stationsUrl) {
+          const stationsData = await nwsFetch(stationsUrl);
+          const stationUrl = stationsData.features?.[0]?.id;
+          if (stationUrl) {
+            const latest = await nwsFetch(`${stationUrl}/observations/latest`);
+            const p = latest.properties || {};
+            weather = {
+              stationName: p.station || stationUrl,
+              timestamp: p.timestamp,
+              temperatureF: cToF(p.temperature?.value),
+              windDir: `${degToCompass(p.windDirection?.value)} (${Math.round(p.windDirection?.value ?? 0)}°)`,
+              windMph: metersToMiles(p.windSpeed?.value) * 3600,
+              humidity: p.relativeHumidity?.value != null ? Math.round(p.relativeHumidity.value) : null,
+              dewpointF: cToF(p.dewpoint?.value),
+              pressureInHg: p.barometricPressure?.value != null ? p.barometricPressure.value * 0.0002953 : null,
+              visibilityMiles: metersToMiles(p.visibility?.value),
+              textDescription: p.textDescription
+            };
+          }
+        }
+
+        setStatus('processing', 'Fetching active alerts...');
+        const pointAlerts = await nwsFetch(`https://api.weather.gov/alerts/active?point=${lat},${lon}`);
+        const areaAlerts = stateCode
+          ? await nwsFetch(`https://api.weather.gov/alerts/active?area=${stateCode}`)
+          : { features: [] };
+
+        const combined = [...(pointAlerts.features || []), ...(areaAlerts.features || [])];
+        const deduped = Object.values(combined.reduce((acc, item) => {
+          const key = item.id || item.properties?.id || Math.random().toString(36);
+          acc[key] = item;
+          return acc;
+        }, {}));
+
+        alerts = deduped.filter((alert) => {
+          const center = getCenterFromGeometry(alert.geometry);
+          if (!center) {
+            const geocodes = alert.properties?.geocode?.UGC || [];
+            return geocodes.length > 0 ? rangeMiles >= 0 : false;
+          }
+          const dist = haversineMiles(lat, lon, center.lat, center.lon);
+          return dist <= rangeMiles;
+        });
+      }
+
+      if (mode === 'zone') {
+        const zone = zoneInput.value.trim().toUpperCase();
+        if (!zone) throw new Error('Provide an NWS zone id.');
+        setStatus('processing', 'Fetching zone alerts...');
+        const zoneAlerts = await nwsFetch(`https://api.weather.gov/alerts/active?zone=${encodeURIComponent(zone)}`);
+        alerts = zoneAlerts.features || [];
+      }
+
+      if (mode === 'area') {
+        const area = areaInput.value.trim().toUpperCase();
+        if (!area) throw new Error('Provide a state/territory area code.');
+        setStatus('processing', 'Fetching area alerts...');
+        const areaAlerts = await nwsFetch(`https://api.weather.gov/alerts/active?area=${encodeURIComponent(area)}`);
+        alerts = areaAlerts.features || [];
+      }
+
+      renderWeather(weather);
+      renderAlerts(alerts, rangeMiles);
+      setStatus('idle', 'Completed successfully.');
+    }
+
+    gpsBtn.addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        setStatus('error', 'Geolocation is not available in this browser.');
+        return;
+      }
+      setStatus('fetching', 'Requesting current GPS location...');
+      navigator.geolocation.getCurrentPosition((pos) => {
+        latInput.value = pos.coords.latitude.toFixed(4);
+        lonInput.value = pos.coords.longitude.toFixed(4);
+        setStatus('idle', 'GPS location loaded.');
+      }, (err) => {
+        setStatus('error', `GPS error: ${err.message}`);
+      });
+    });
+
+    locationMode.addEventListener('change', updateModeInputs);
+    loadBtn.addEventListener('click', async () => {
+      try {
+        await fetchWeatherAndAlerts();
+      } catch (err) {
+        console.error(err);
+        setStatus('error', err.message || String(err));
+      }
+    });
+
+    updateModeInputs();
+  </script>
+</body>
+</html>
