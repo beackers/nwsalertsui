@@ -214,6 +214,26 @@
 
     <section class="card">
       <h2>Current Alerts Within Range</h2>
+      <div class="grid" style="margin-bottom:0.8rem;">
+        <div>
+          <label for="countySearch">Search county</label>
+          <input id="countySearch" type="text" placeholder="e.g., Douglas" />
+        </div>
+        <div>
+          <label for="alertTypeFilter">Filter by alert type</label>
+          <select id="alertTypeFilter">
+            <option value="">All alert types</option>
+          </select>
+        </div>
+        <div>
+          <label for="alertSort">Sort alerts</label>
+          <select id="alertSort">
+            <option value="default">Default (NWS order)</option>
+            <option value="type-asc">Type (A → Z)</option>
+            <option value="type-desc">Type (Z → A)</option>
+          </select>
+        </div>
+      </div>
       <div id="alertsSummary" class="muted">No alerts loaded yet.</div>
       <div id="alertsList" class="alerts" style="margin-top:0.8rem;"></div>
     </section>
@@ -241,6 +261,7 @@
     const weatherGrid = document.getElementById('weatherGrid');
     const alertsSummary = document.getElementById('alertsSummary');
     const alertsList = document.getElementById('alertsList');
+    let allAlerts = [];
 
     function setStatus(state, message) {
       statusBanner.className = `status-banner status-${state}`;
@@ -338,8 +359,55 @@
       `).join('');
     }
 
-    function renderAlerts(alerts, rangeMiles) {
-      alertsSummary.textContent = `${alerts.length} alert(s) found within ~${rangeMiles} miles.`;
+    function populateAlertTypeOptions(alerts) {
+      const alertTypeSelect = document.getElementById('alertTypeFilter');
+      const selected = alertTypeSelect.value;
+      const types = [...new Set((alerts || []).map((a) => a.properties?.event).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      alertTypeSelect.innerHTML = '<option value="">All alert types</option>'
+        + types.map((type) => `<option value="${type}">${type}</option>`).join('');
+      if (selected && types.includes(selected)) {
+        alertTypeSelect.value = selected;
+      }
+    }
+
+    function getFilteredAndSortedAlerts(alerts) {
+      const countyQuery = document.getElementById('countySearch').value.trim().toLowerCase();
+      const alertType = document.getElementById('alertTypeFilter').value;
+      const sortMode = document.getElementById('alertSort').value;
+
+      let result = [...alerts];
+
+      if (countyQuery) {
+        result = result.filter((alert) => {
+          const areaDesc = (alert.properties?.areaDesc || '').toLowerCase();
+          return areaDesc.includes(countyQuery);
+        });
+      }
+
+      if (alertType) {
+        result = result.filter((alert) => alert.properties?.event === alertType);
+      }
+
+      if (sortMode === 'type-asc') {
+        result.sort((a, b) => (a.properties?.event || '').localeCompare(b.properties?.event || ''));
+      } else if (sortMode === 'type-desc') {
+        result.sort((a, b) => (b.properties?.event || '').localeCompare(a.properties?.event || ''));
+      }
+
+      return { alerts: result, countyQuery, alertType };
+    }
+
+    function applyAlertControls(rangeMiles) {
+      const { alerts, countyQuery, alertType } = getFilteredAndSortedAlerts(allAlerts);
+      const filters = [];
+      if (countyQuery) filters.push(`county contains "${countyQuery}"`);
+      if (alertType) filters.push(`type "${alertType}"`);
+      const filterText = filters.length ? ` (filtered by ${filters.join(' and ')})` : '';
+      renderAlerts(alerts, rangeMiles, filterText);
+    }
+
+    function renderAlerts(alerts, rangeMiles, filterText = '') {
+      alertsSummary.textContent = `${alerts.length} alert(s) found within ~${rangeMiles} miles${filterText}.`;
       if (!alerts.length) {
         alertsList.innerHTML = '<div class="muted">No active alerts in selected range.</div>';
         return;
@@ -466,7 +534,9 @@
       }
 
       renderWeather(weather);
-      renderAlerts(alerts, rangeMiles);
+      allAlerts = alerts;
+      populateAlertTypeOptions(allAlerts);
+      applyAlertControls(rangeMiles);
       setStatus('idle', 'Completed successfully.');
     }
 
@@ -486,6 +556,18 @@
     });
 
     locationMode.addEventListener('change', updateModeInputs);
+    document.getElementById('countySearch').addEventListener('input', () => {
+      const rangeMiles = Math.max(0, Number(rangeMilesInput.value) || 0);
+      applyAlertControls(rangeMiles);
+    });
+    document.getElementById('alertTypeFilter').addEventListener('change', () => {
+      const rangeMiles = Math.max(0, Number(rangeMilesInput.value) || 0);
+      applyAlertControls(rangeMiles);
+    });
+    document.getElementById('alertSort').addEventListener('change', () => {
+      const rangeMiles = Math.max(0, Number(rangeMilesInput.value) || 0);
+      applyAlertControls(rangeMiles);
+    });
     loadBtn.addEventListener('click', async () => {
       try {
         await fetchWeatherAndAlerts();
