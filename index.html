@@ -139,6 +139,35 @@
       padding: 0.8rem;
     }
 
+    .radar-wrap {
+      margin-top: 0.7rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+      max-width: 640px;
+      background: #0b1220;
+    }
+
+    .radar-wrap img {
+      width: 100%;
+      display: block;
+    }
+
+    .radar-overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .radar-overlay path {
+      stroke: #ff3366;
+      stroke-width: 2;
+      fill: rgba(255, 51, 102, 0.24);
+    }
+
     .muted { color: var(--muted); }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
     .small { font-size: 0.86rem; }
@@ -160,6 +189,7 @@
             <option value="point">Point string (lat,lon)</option>
             <option value="zone">NWS zone id (e.g., CAZ041)</option>
             <option value="area">State/Territory area code (e.g., CA)</option>
+            <option value="address">Street/City/Address</option>
           </select>
         </div>
 
@@ -196,6 +226,15 @@
       <div id="areaInputs" class="hidden" style="margin-top:0.8rem;">
         <label for="areaInput">Area code</label>
         <input id="areaInput" type="text" placeholder="CA" maxlength="2" />
+      </div>
+
+      <div id="addressInputs" class="hidden" style="margin-top:0.8rem;">
+        <label for="addressInput">Address</label>
+        <input id="addressInput" type="text" placeholder="1600 Pennsylvania Ave NW, Washington, DC" />
+      </div>
+
+      <div style="margin-top:0.8rem;">
+        <label><input id="showRadar" type="checkbox" style="width:auto; margin-right:0.4rem;" /> Show recent radar image for each alert with highlighted alert area</label>
       </div>
 
       <div style="margin-top:0.9rem;">
@@ -249,19 +288,34 @@
     const pointInputs = document.getElementById('pointInputs');
     const zoneInputs = document.getElementById('zoneInputs');
     const areaInputs = document.getElementById('areaInputs');
+    const addressInputs = document.getElementById('addressInputs');
 
     const latInput = document.getElementById('latInput');
     const lonInput = document.getElementById('lonInput');
     const pointInput = document.getElementById('pointInput');
     const zoneInput = document.getElementById('zoneInput');
     const areaInput = document.getElementById('areaInput');
+    const addressInput = document.getElementById('addressInput');
     const rangeMilesInput = document.getElementById('rangeMiles');
+    const showRadarInput = document.getElementById('showRadar');
 
     const weatherSummary = document.getElementById('weatherSummary');
     const weatherGrid = document.getElementById('weatherGrid');
     const alertsSummary = document.getElementById('alertsSummary');
     const alertsList = document.getElementById('alertsList');
     let allAlerts = [];
+
+    const stateCenters = {
+      AL:[32.806671,-86.791130], AK:[61.370716,-152.404419], AZ:[33.729759,-111.431221], AR:[34.969704,-92.373123], CA:[36.116203,-119.681564], CO:[39.059811,-105.311104],
+      CT:[41.597782,-72.755371], DE:[39.318523,-75.507141], FL:[27.766279,-81.686783], GA:[33.040619,-83.643074], HI:[21.094318,-157.498337], ID:[44.240459,-114.478828],
+      IL:[40.349457,-88.986137], IN:[39.849426,-86.258278], IA:[42.011539,-93.210526], KS:[38.526600,-96.726486], KY:[37.668140,-84.670067], LA:[31.169546,-91.867805],
+      ME:[44.693947,-69.381927], MD:[39.063946,-76.802101], MA:[42.230171,-71.530106], MI:[43.326618,-84.536095], MN:[45.694454,-93.900192], MS:[32.741646,-89.678696],
+      MO:[38.456085,-92.288368], MT:[46.921925,-110.454353], NE:[41.125370,-98.268082], NV:[38.313515,-117.055374], NH:[43.452492,-71.563896], NJ:[40.298904,-74.521011],
+      NM:[34.840515,-106.248482], NY:[42.165726,-74.948051], NC:[35.630066,-79.806419], ND:[47.528912,-99.784012], OH:[40.388783,-82.764915], OK:[35.565342,-96.928917],
+      OR:[44.572021,-122.070938], PA:[40.590752,-77.209755], RI:[41.680893,-71.511780], SC:[33.856892,-80.945007], SD:[44.299782,-99.438828], TN:[35.747845,-86.692345],
+      TX:[31.054487,-97.563461], UT:[40.150032,-111.862434], VT:[44.045876,-72.710686], VA:[37.769337,-78.169968], WA:[47.400902,-121.490494], WV:[38.491226,-80.954453],
+      WI:[44.268543,-89.616508], WY:[42.755966,-107.302490], DC:[38.9072,-77.0369], PR:[18.2208,-66.5901], GU:[13.4443,144.7937], VI:[18.3358,-64.8963], AS:[-14.2710,-170.1322], MP:[15.0979,145.6739]
+    };
 
     function setStatus(state, message) {
       statusBanner.className = `status-banner status-${state}`;
@@ -300,17 +354,11 @@
       if (!geometry || !geometry.coordinates) return null;
       let points = [];
       const type = geometry.type;
-      if (type === 'Point') {
-        points = [geometry.coordinates];
-      } else if (type === 'Polygon') {
-        points = geometry.coordinates.flat();
-      } else if (type === 'MultiPolygon') {
-        points = geometry.coordinates.flat(2);
-      }
+      if (type === 'Point') points = [geometry.coordinates];
+      else if (type === 'Polygon') points = geometry.coordinates.flat();
+      else if (type === 'MultiPolygon') points = geometry.coordinates.flat(2);
       if (!points.length) return null;
-      let lonSum = 0;
-      let latSum = 0;
-      let count = 0;
+      let lonSum = 0, latSum = 0, count = 0;
       for (const p of points) {
         if (Array.isArray(p) && p.length >= 2) {
           lonSum += p[0];
@@ -320,6 +368,25 @@
       }
       if (!count) return null;
       return { lat: latSum / count, lon: lonSum / count };
+    }
+
+    function getGeometryBounds(geometry) {
+      if (!geometry || !geometry.coordinates) return null;
+      let points = [];
+      if (geometry.type === 'Point') points = [geometry.coordinates];
+      if (geometry.type === 'Polygon') points = geometry.coordinates.flat();
+      if (geometry.type === 'MultiPolygon') points = geometry.coordinates.flat(2);
+      if (!points.length) return null;
+      let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
+      for (const p of points) {
+        if (!Array.isArray(p) || p.length < 2) continue;
+        minLon = Math.min(minLon, p[0]);
+        maxLon = Math.max(maxLon, p[0]);
+        minLat = Math.min(minLat, p[1]);
+        maxLat = Math.max(maxLat, p[1]);
+      }
+      if (!Number.isFinite(minLon) || !Number.isFinite(minLat)) return null;
+      return { minLon, minLat, maxLon, maxLat };
     }
 
     function haversineMiles(lat1, lon1, lat2, lon2) {
@@ -339,7 +406,10 @@
         return;
       }
 
-      weatherSummary.textContent = `${weather.stationName ?? 'Unknown station'} · Updated: ${weather.timestamp ? new Date(weather.timestamp).toLocaleString() : 'N/A'}`;
+      const distanceText = weather.distanceMiles != null
+        ? ` · Approx distance to ${weather.distanceLabel}: ${weather.distanceMiles.toFixed(1)} miles`
+        : '';
+      weatherSummary.textContent = `${weather.stationName ?? 'Unknown station'} · Updated: ${weather.timestamp ? new Date(weather.timestamp).toLocaleString() : 'N/A'}${distanceText}`;
 
       const metrics = [
         ['Temperature', weather.temperatureF != null ? `${weather.temperatureF.toFixed(1)} °F` : 'N/A'],
@@ -348,7 +418,8 @@
         ['Dewpoint', weather.dewpointF != null ? `${weather.dewpointF.toFixed(1)} °F` : 'N/A'],
         ['Barometric pressure', weather.pressureInHg != null ? `${weather.pressureInHg.toFixed(2)} inHg` : 'N/A'],
         ['Visibility', weather.visibilityMiles != null ? `${weather.visibilityMiles.toFixed(1)} mi` : 'N/A'],
-        ['Text description', weather.textDescription ?? 'N/A']
+        ['Text description', weather.textDescription ?? 'N/A'],
+        ['Distance to requested location', weather.distanceMiles != null ? `${weather.distanceMiles.toFixed(1)} mi` : 'N/A']
       ];
 
       weatherGrid.innerHTML = metrics.map(([label, value]) => `
@@ -365,35 +436,18 @@
       const types = [...new Set((alerts || []).map((a) => a.properties?.event).filter(Boolean))].sort((a, b) => a.localeCompare(b));
       alertTypeSelect.innerHTML = '<option value="">All alert types</option>'
         + types.map((type) => `<option value="${type}">${type}</option>`).join('');
-      if (selected && types.includes(selected)) {
-        alertTypeSelect.value = selected;
-      }
+      if (selected && types.includes(selected)) alertTypeSelect.value = selected;
     }
 
     function getFilteredAndSortedAlerts(alerts) {
       const countyQuery = document.getElementById('countySearch').value.trim().toLowerCase();
       const alertType = document.getElementById('alertTypeFilter').value;
       const sortMode = document.getElementById('alertSort').value;
-
       let result = [...alerts];
-
-      if (countyQuery) {
-        result = result.filter((alert) => {
-          const areaDesc = (alert.properties?.areaDesc || '').toLowerCase();
-          return areaDesc.includes(countyQuery);
-        });
-      }
-
-      if (alertType) {
-        result = result.filter((alert) => alert.properties?.event === alertType);
-      }
-
-      if (sortMode === 'type-asc') {
-        result.sort((a, b) => (a.properties?.event || '').localeCompare(b.properties?.event || ''));
-      } else if (sortMode === 'type-desc') {
-        result.sort((a, b) => (b.properties?.event || '').localeCompare(a.properties?.event || ''));
-      }
-
+      if (countyQuery) result = result.filter((alert) => (alert.properties?.areaDesc || '').toLowerCase().includes(countyQuery));
+      if (alertType) result = result.filter((alert) => alert.properties?.event === alertType);
+      if (sortMode === 'type-asc') result.sort((a, b) => (a.properties?.event || '').localeCompare(b.properties?.event || ''));
+      else if (sortMode === 'type-desc') result.sort((a, b) => (b.properties?.event || '').localeCompare(a.properties?.event || ''));
       return { alerts: result, countyQuery, alertType };
     }
 
@@ -403,10 +457,48 @@
       if (countyQuery) filters.push(`county contains "${countyQuery}"`);
       if (alertType) filters.push(`type "${alertType}"`);
       const filterText = filters.length ? ` (filtered by ${filters.join(' and ')})` : '';
-      renderAlerts(alerts, rangeMiles, filterText);
+      renderAlerts(alerts, rangeMiles, filterText, showRadarInput.checked);
     }
 
-    function renderAlerts(alerts, rangeMiles, filterText = '') {
+    function expandBounds(bounds, factor = 0.4, minPad = 0.2) {
+      const lonSpan = Math.max(bounds.maxLon - bounds.minLon, minPad);
+      const latSpan = Math.max(bounds.maxLat - bounds.minLat, minPad);
+      return {
+        minLon: Math.max(-180, bounds.minLon - (lonSpan * factor)),
+        maxLon: Math.min(180, bounds.maxLon + (lonSpan * factor)),
+        minLat: Math.max(-90, bounds.minLat - (latSpan * factor)),
+        maxLat: Math.min(90, bounds.maxLat + (latSpan * factor))
+      };
+    }
+
+    function radarImageUrl(bounds, width = 640, height = 360) {
+      const bbox = `${bounds.minLon},${bounds.minLat},${bounds.maxLon},${bounds.maxLat}`;
+      return `https://nowcoast.noaa.gov/geoserver/observations_radar/wms?service=WMS&request=GetMap&layers=conus_base_reflectivity_mosaic&styles=&format=image/png&transparent=false&version=1.1.1&srs=EPSG:4326&bbox=${encodeURIComponent(bbox)}&width=${width}&height=${height}`;
+    }
+
+    function geometryToSvgPaths(geometry, bounds, width = 640, height = 360) {
+      const lonSpan = bounds.maxLon - bounds.minLon;
+      const latSpan = bounds.maxLat - bounds.minLat;
+      if (lonSpan <= 0 || latSpan <= 0) return [];
+      const scalePoint = ([lon, lat]) => {
+        const x = ((lon - bounds.minLon) / lonSpan) * width;
+        const y = ((bounds.maxLat - lat) / latSpan) * height;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      };
+      const ringsToPath = (rings) => rings
+        .filter((ring) => Array.isArray(ring) && ring.length > 1)
+        .map((ring) => `M ${ring.map(scalePoint).join(' L ')} Z`)
+        .join(' ');
+      if (geometry.type === 'Polygon') return [ringsToPath(geometry.coordinates)];
+      if (geometry.type === 'MultiPolygon') return geometry.coordinates.map((poly) => ringsToPath(poly));
+      if (geometry.type === 'Point') {
+        const [x, y] = scalePoint(geometry.coordinates).split(',').map(Number);
+        return [`M ${x - 7},${y} a 7,7 0 1,0 14,0 a 7,7 0 1,0 -14,0 Z`];
+      }
+      return [];
+    }
+
+    function renderAlerts(alerts, rangeMiles, filterText = '', includeRadar = false) {
       alertsSummary.textContent = `${alerts.length} alert(s) found within ~${rangeMiles} miles${filterText}.`;
       if (!alerts.length) {
         alertsList.innerHTML = '<div class="muted">No active alerts in selected range.</div>';
@@ -416,12 +508,29 @@
       alertsList.innerHTML = alerts.map((a) => {
         const p = a.properties || {};
         const areas = (p.areaDesc || 'N/A').split(';').map(s => s.trim()).filter(Boolean).slice(0, 8);
+        let radarHtml = '';
+        if (includeRadar && a.geometry) {
+          const baseBounds = getGeometryBounds(a.geometry);
+          if (baseBounds) {
+            const bounds = expandBounds(baseBounds);
+            const imageUrl = radarImageUrl(bounds);
+            const paths = geometryToSvgPaths(a.geometry, bounds).filter(Boolean).map((d) => `<path d="${d}"></path>`).join('');
+            radarHtml = `
+              <div class="radar-wrap">
+                <img src="${imageUrl}" alt="Most recent radar mosaic near ${p.event ?? 'alert'}" loading="lazy" />
+                <svg class="radar-overlay" viewBox="0 0 640 360" preserveAspectRatio="none">${paths}</svg>
+              </div>
+              <div class="small muted">Recent radar mosaic (NOAA nowCOAST) with highlighted alert geometry.</div>
+            `;
+          }
+        }
         return `
           <article class="alert-item">
             <div><strong>${p.event ?? 'Unknown alert type'}</strong></div>
             <div class="small"><strong>Expires:</strong> ${p.expires ? new Date(p.expires).toLocaleString() : 'N/A'}</div>
             <div class="small"><strong>Affected areas:</strong> ${areas.join(', ') || 'N/A'}</div>
             <p class="small">${p.description ? p.description.slice(0, 800) : 'No description provided.'}</p>
+            ${radarHtml}
           </article>
         `;
       }).join('');
@@ -433,6 +542,7 @@
       pointInputs.classList.toggle('hidden', mode !== 'point');
       zoneInputs.classList.toggle('hidden', mode !== 'zone');
       areaInputs.classList.toggle('hidden', mode !== 'area');
+      addressInputs.classList.toggle('hidden', mode !== 'address');
     }
 
     function normalizePointFromMode() {
@@ -453,6 +563,59 @@
       return null;
     }
 
+    async function geocodeAddress(address) {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(address)}`;
+      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      if (!res.ok) throw new Error('Address lookup failed.');
+      const data = await res.json();
+      const best = data?.[0];
+      if (!best) throw new Error('Could not geocode that address.');
+      return { lat: Number(best.lat), lon: Number(best.lon) };
+    }
+
+    async function getZoneCenter(zoneId) {
+      const forecast = await nwsFetch(`https://api.weather.gov/zones?type=forecast&id=${encodeURIComponent(zoneId)}`);
+      const center = getCenterFromGeometry(forecast.features?.[0]?.geometry);
+      if (!center) throw new Error(`Unable to resolve center point for zone ${zoneId}.`);
+      return center;
+    }
+
+    async function fetchWeatherForPoint(lat, lon, targetLabel = 'requested location') {
+      const pointData = await nwsFetch(`https://api.weather.gov/points/${lat},${lon}`);
+      const stationsUrl = pointData.properties?.observationStations;
+      const stateCode = pointData.properties?.relativeLocation?.properties?.state;
+      if (!stationsUrl) return { weather: null, stateCode };
+      const stationsData = await nwsFetch(stationsUrl);
+      const stationUrl = stationsData.features?.[0]?.id;
+      if (!stationUrl) return { weather: null, stateCode };
+
+      const latest = await nwsFetch(`${stationUrl}/observations/latest`);
+      const p = latest.properties || {};
+      const stationLon = latest.geometry?.coordinates?.[0];
+      const stationLat = latest.geometry?.coordinates?.[1];
+      const distanceMiles = (Number.isFinite(stationLat) && Number.isFinite(stationLon))
+        ? haversineMiles(stationLat, stationLon, lat, lon)
+        : null;
+
+      return {
+        stateCode,
+        weather: {
+          stationName: p.station || stationUrl,
+          timestamp: p.timestamp,
+          temperatureF: cToF(p.temperature?.value),
+          windDir: `${degToCompass(p.windDirection?.value)} (${Math.round(p.windDirection?.value ?? 0)}°)`,
+          windMph: metersToMiles(p.windSpeed?.value) * 3600,
+          humidity: p.relativeHumidity?.value != null ? Math.round(p.relativeHumidity.value) : null,
+          dewpointF: cToF(p.dewpoint?.value),
+          pressureInHg: p.barometricPressure?.value != null ? p.barometricPressure.value * 0.0002953 : null,
+          visibilityMiles: metersToMiles(p.visibility?.value),
+          textDescription: p.textDescription,
+          distanceMiles,
+          distanceLabel: targetLabel
+        }
+      };
+    }
+
     async function fetchWeatherAndAlerts() {
       setStatus('fetching', 'Requesting data from NWS API...');
       weatherGrid.innerHTML = '';
@@ -463,42 +626,47 @@
 
       let weather = null;
       let alerts = [];
+      let targetPoint = null;
+      let targetLabel = 'requested location';
+      let resolvedState = null;
 
       if (mode === 'latlon' || mode === 'point') {
-        const { lat, lon } = normalizePointFromMode();
+        targetPoint = normalizePointFromMode();
+        targetLabel = 'point';
+      } else if (mode === 'address') {
+        const address = addressInput.value.trim();
+        if (!address) throw new Error('Provide an address.');
+        setStatus('processing', 'Geocoding address...');
+        targetPoint = await geocodeAddress(address);
+        targetLabel = 'address';
+      } else if (mode === 'area') {
+        const area = areaInput.value.trim().toUpperCase();
+        if (!area) throw new Error('Provide a state/territory area code.');
+        const center = stateCenters[area];
+        if (!center) throw new Error(`No centroid mapping found for area ${area}.`);
+        targetPoint = { lat: center[0], lon: center[1] };
+        targetLabel = `${area} state/territory`;
+      } else if (mode === 'zone') {
+        const zone = zoneInput.value.trim().toUpperCase();
+        if (!zone) throw new Error('Provide an NWS zone id.');
+        setStatus('processing', 'Resolving zone center...');
+        targetPoint = await getZoneCenter(zone);
+        targetLabel = `zone ${zone}`;
+      }
 
+      if (targetPoint) {
         setStatus('processing', 'Resolving NWS grid point + station...');
-        const pointData = await nwsFetch(`https://api.weather.gov/points/${lat},${lon}`);
-        const stationsUrl = pointData.properties?.observationStations;
-        const stateCode = pointData.properties?.relativeLocation?.properties?.state;
+        const weatherInfo = await fetchWeatherForPoint(targetPoint.lat, targetPoint.lon, targetLabel);
+        weather = weatherInfo.weather;
+        resolvedState = weatherInfo.stateCode;
+      }
 
-        if (stationsUrl) {
-          const stationsData = await nwsFetch(stationsUrl);
-          const stationUrl = stationsData.features?.[0]?.id;
-          if (stationUrl) {
-            const latest = await nwsFetch(`${stationUrl}/observations/latest`);
-            const p = latest.properties || {};
-            weather = {
-              stationName: p.station || stationUrl,
-              timestamp: p.timestamp,
-              temperatureF: cToF(p.temperature?.value),
-              windDir: `${degToCompass(p.windDirection?.value)} (${Math.round(p.windDirection?.value ?? 0)}°)`,
-              windMph: metersToMiles(p.windSpeed?.value) * 3600,
-              humidity: p.relativeHumidity?.value != null ? Math.round(p.relativeHumidity.value) : null,
-              dewpointF: cToF(p.dewpoint?.value),
-              pressureInHg: p.barometricPressure?.value != null ? p.barometricPressure.value * 0.0002953 : null,
-              visibilityMiles: metersToMiles(p.visibility?.value),
-              textDescription: p.textDescription
-            };
-          }
-        }
-
+      if (mode === 'latlon' || mode === 'point' || mode === 'address') {
         setStatus('processing', 'Fetching active alerts...');
-        const pointAlerts = await nwsFetch(`https://api.weather.gov/alerts/active?point=${lat},${lon}`);
-        const areaAlerts = stateCode
-          ? await nwsFetch(`https://api.weather.gov/alerts/active?area=${stateCode}`)
+        const pointAlerts = await nwsFetch(`https://api.weather.gov/alerts/active?point=${targetPoint.lat},${targetPoint.lon}`);
+        const areaAlerts = resolvedState
+          ? await nwsFetch(`https://api.weather.gov/alerts/active?area=${resolvedState}`)
           : { features: [] };
-
         const combined = [...(pointAlerts.features || []), ...(areaAlerts.features || [])];
         const deduped = Object.values(combined.reduce((acc, item) => {
           const key = item.id || item.properties?.id || Math.random().toString(36);
@@ -512,14 +680,13 @@
             const geocodes = alert.properties?.geocode?.UGC || [];
             return geocodes.length > 0 ? rangeMiles >= 0 : false;
           }
-          const dist = haversineMiles(lat, lon, center.lat, center.lon);
+          const dist = haversineMiles(targetPoint.lat, targetPoint.lon, center.lat, center.lon);
           return dist <= rangeMiles;
         });
       }
 
       if (mode === 'zone') {
         const zone = zoneInput.value.trim().toUpperCase();
-        if (!zone) throw new Error('Provide an NWS zone id.');
         setStatus('processing', 'Fetching zone alerts...');
         const zoneAlerts = await nwsFetch(`https://api.weather.gov/alerts/active?zone=${encodeURIComponent(zone)}`);
         alerts = zoneAlerts.features || [];
@@ -527,7 +694,6 @@
 
       if (mode === 'area') {
         const area = areaInput.value.trim().toUpperCase();
-        if (!area) throw new Error('Provide a state/territory area code.');
         setStatus('processing', 'Fetching area alerts...');
         const areaAlerts = await nwsFetch(`https://api.weather.gov/alerts/active?area=${encodeURIComponent(area)}`);
         alerts = areaAlerts.features || [];
@@ -565,6 +731,10 @@
       applyAlertControls(rangeMiles);
     });
     document.getElementById('alertSort').addEventListener('change', () => {
+      const rangeMiles = Math.max(0, Number(rangeMilesInput.value) || 0);
+      applyAlertControls(rangeMiles);
+    });
+    showRadarInput.addEventListener('change', () => {
       const rangeMiles = Math.max(0, Number(rangeMilesInput.value) || 0);
       applyAlertControls(rangeMiles);
     });
